@@ -8,7 +8,7 @@
     <OutputType>Exe</OutputType>
     <RootNamespace>GZipTest</RootNamespace>
     <AssemblyName>GZipTest</AssemblyName>
-    <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <TargetFrameworkProfile />
   </PropertyGroup>
@@ -44,7 +44,8 @@
   <ItemGroup>
     <Compile Include="GZipCompress.cs" />
     <Compile Include="GZipDeCompress.cs" />
-    <Compile Include="MyConsole.cs" />
+    <Compile Include="ConsoleWrapper.cs" />
+    <Compile Include="LogWriter.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>

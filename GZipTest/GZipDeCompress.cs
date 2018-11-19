@@ -7,24 +7,39 @@ namespace GZipTest
 {
     class GZipDeComppress
     {
-        byte[][] sourceData;
-        byte[][] gzipData;
-        readonly string sourceFile;
-        readonly string targetFile;
-        readonly int threadsCount = Environment.ProcessorCount;
-        DateTime tS;
-        Thread[] ThreadCollection;
-        readonly int offsetMark = 4;
-        readonly ConsoleColor defCc = ConsoleColor.Gray;
+        //начало выполнения
+        DateTime time_start;
+        //коллекция потоков
+        Thread[] threads_collection;
+
+        //массивы исходных и конечных данных
+        byte[][] source_data;
+        byte[][] target_data;
+
+        readonly int offset = 4; //когда мы разбиваем на части необходимо сместиться на 4 байта
+        readonly int threads_count = Environment.ProcessorCount;
+
+        readonly string source_file;
+        readonly string target_file;
 
         /// <summary>
-        /// работа с консолью чуть удобней
+        /// работа с консолью
         /// </summary>
-        MyConsole myConsole = new MyConsole();
-        public GZipDeComppress(string sFile, string tFile)
+        ConsoleWrapper MyConsole = new ConsoleWrapper();
+        /// <summary>
+        /// Запись логов
+        /// </summary>
+        LogWriter MyLogWriter;
+
+        public GZipDeComppress(string set_source_file, string set_target_file)
         {
-            sourceFile = sFile;
-            targetFile = tFile;
+            source_file = set_source_file;
+            target_file = set_target_file;
+
+            MyLogWriter = new LogWriter(Path.ChangeExtension(source_file, "log"));
+
+            source_data = new byte[threads_count][];
+            target_data = new byte[threads_count][];
         }
 
         /// <summary>
@@ -32,79 +47,108 @@ namespace GZipTest
         /// </summary>
         public void DeComppressFile()
         {
-            tS = DateTime.Now;
-            sourceData = new byte[threadsCount][];
-            gzipData = new byte[threadsCount][];
-
+            time_start = DateTime.Now;
             try
             {
-                using (FileStream sourceStream = new FileStream(sourceFile, FileMode.Open))
+                using (FileStream source_stream = new FileStream(source_file, FileMode.Open))
                 {
-                    using (FileStream targetStream = File.Create(targetFile))
+                    using (FileStream target_stream = File.Create(target_file))
                     {
-                        Console.WriteLine($"Выполняется извлечение из архива {sourceFile}.\n");
-                        while (sourceStream.Position < sourceStream.Length)
+                        Console.WriteLine($"Выполняется извлечение из архива {source_file}.\n");
+                        MyLogWriter.WriteLog($"Выполняется извлечение из архива {source_file}.");
+                        while (source_stream.Position < source_stream.Length)
                         {
                             //Создаем коллекцию потоков
-                            ThreadCollection = new Thread[threadsCount];
+                            threads_collection = new Thread[threads_count];
                             //распределяем данные по потокам и расжимаем их
-                            DeComppressParts(sourceStream);
+                            DeComppressParts(source_stream);
                             //объединяем полученные данные и помещаем их в целевой поток
-                            MergeTargetData(targetStream);
+                            MergeTargetData(target_stream);
                         }
 
-                        myConsole.PrintText($"\n\nУспешное завершение\nФайл: {targetFile}\nПрошло времени: {DateTime.Now - tS}", defCc);
+                        string message = $"\n\nУспешное завершение\nФайл: {target_file}\nПрошло времени: {DateTime.Now - time_start}";
+                        MyConsole.PrintText(message, ConsoleColor.Gray);
+                        MyLogWriter.WriteLog(message);
                     }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine(ex.Message);
-                Console.ReadKey();
+                MyConsole.PrintError(ex.Message);
+                MyLogWriter.WriteLog(ex.Message);
             }
         }
 
-        #region Обслуживающие методы
         /// <summary>
         /// Объединение блоков данных
         /// </summary>
-        /// <param name="targetStream"></param>
-        private void MergeTargetData(FileStream targetStream)
+        /// <param name="target_stream"></param>
+        private void MergeTargetData(FileStream target_stream)
         {
-            for (int partCounter = 0; partCounter < threadsCount; partCounter++)
+            try
             {
-                if (ThreadCollection[partCounter] != null)
+                for (int num = 0; num < threads_count; num++)
                 {
-                    ThreadCollection[partCounter].Join();
-                    targetStream.Write(sourceData[partCounter], 0, sourceData[partCounter].Length);
+                    if (threads_collection[num] != null)
+                    {
+                        threads_collection[num].Join();
+                        target_stream.Write(source_data[num], 0, source_data[num].Length);
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                MyConsole.PrintError(ex.Message);
+                MyLogWriter.WriteLog(ex.Message);
             }
         }
         /// <summary>
         /// Извлечение блоков
         /// </summary>
-        /// <param name="sourceStream"></param>
-        private void DeComppressParts(FileStream sourceStream)
+        /// <param name="source_stream"></param>
+        private void DeComppressParts(FileStream source_stream)
         {
-            int dataLength = 8;
-            byte[] buffer = new byte[dataLength];
-            int partSize;
-            int zipPartSize;
-            for (int iPart = 0; iPart < threadsCount; iPart++)
+            //http://www.zlib.org/rfc-gzip.html#member-format
+            //  0   1   2   3   4   5   6   7
+            //+---+---+---+---+---+---+---+---+
+            //|     CRC32     |     ISIZE     |
+            //+---+---+---+---+---+---+---+---+
+
+            try
             {
-                if (sourceStream.Position < sourceStream.Length)
+                //записываются в начало каждого блока
+                int zip_info_data = 8;
+                byte[] buffer = new byte[zip_info_data];
+                int part_size;
+                //длина блока вместе с заголовком
+                int zip_part_size;
+                for (int num = 0; num < threads_count; num++)
                 {
-                    sourceStream.Read(buffer, 0, dataLength);
-                    //Определяем размер блока
-                    zipPartSize = BitConverter.ToInt32(buffer, offsetMark);
-                    gzipData[iPart] = new byte[zipPartSize];
-                    buffer.CopyTo(gzipData[iPart], 0);
-                    sourceStream.Read(gzipData[iPart], dataLength, zipPartSize - dataLength);
-                    partSize = BitConverter.ToInt32(gzipData[iPart], zipPartSize - offsetMark);
-                    sourceData[iPart] = new byte[partSize];
-                    ThreadCollection[iPart] = new Thread(DataStreamDeComppression);
-                    ThreadCollection[iPart].Start(iPart);
+                    if (source_stream.Position < source_stream.Length)
+                    {
+                        //получаем длину блока
+                        source_stream.Read(buffer, 0, zip_info_data);
+                        //определяем размер части
+                        zip_part_size = BitConverter.ToInt32(buffer, offset);
+                        //создаем пустой блок сжатых данных в памяти
+                        target_data[num] = new byte[zip_part_size];
+                        //записываем данные в целевой массив
+                        buffer.CopyTo(target_data[num], 0);
+                        //считываем только данные без заголовка
+                        source_stream.Read(target_data[num], zip_info_data, zip_part_size - zip_info_data);
+                        //получаем чистый размер блока данных
+                        part_size = BitConverter.ToInt32(target_data[num], zip_part_size - offset);
+
+                        source_data[num] = new byte[part_size];
+                        threads_collection[num] = new Thread(DataStreamDeComppression);
+                        threads_collection[num].Start(num);
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                MyConsole.PrintError(ex.Message);
+                MyLogWriter.WriteLog(ex.Message);
             }
         }
         /// <summary>
@@ -113,18 +157,24 @@ namespace GZipTest
         /// <param name="obj"></param>
         void DataStreamDeComppression(object obj)
         {
-            int thread = (int)obj;
-            using (MemoryStream ms = new MemoryStream(gzipData[thread]))
+            try
             {
-                using (GZipStream uzips = new GZipStream(ms, CompressionMode.Decompress))
+                int num = (int)obj;
+                using (MemoryStream ms = new MemoryStream(target_data[num]))
                 {
-                    uzips.Read(sourceData[thread], 0, sourceData[thread].Length);
+                    using (GZipStream zip_stream = new GZipStream(ms, CompressionMode.Decompress))
+                    {
+                        zip_stream.Read(source_data[num], 0, source_data[num].Length);
+                    }
                 }
+                //Выводим номер потока в котором было выполнено извлечение данных
+                MyConsole.PrintProc(num);
             }
-            //Выводим номер потока в котором было выполнено извлечение данных
-            myConsole.PrintProc(thread);
+            catch (Exception ex)
+            {
+                MyConsole.PrintError(ex.Message);
+                MyLogWriter.WriteLog(ex.Message);
+            }
         }
-        #endregion
-
     }
 }

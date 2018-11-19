@@ -7,89 +7,116 @@ namespace GZipTest
 {
     class GZipCompress
     {
-        byte[][] sourceData;
-        byte[][] gzipData;
-        readonly string sourceFile;
-        readonly string targetFile;
-        readonly int threadsCount = Environment.ProcessorCount;
-        DateTime tS;
-        Thread[] ThreadCollection;
-        readonly int offsetMark = 4; //когда мы разбиваем на части необходимо сместиться на 4 байта
+        //начало выполнения
+        DateTime time_start;
+        //коллекция потоков
+        Thread[] threads_collection;
+
+        //массивы исходных и конечных данных
+        byte[][] source_data;
+        byte[][] target_data;
+
+        int part_size = 1048576; //1 MB
+        readonly int offset = 4; //когда мы разбиваем на части необходимо сместиться на 4 байта
+        readonly int threads_count = Environment.ProcessorCount;
+
+        readonly string source_file;
+        readonly string target_file;
 
         /// <summary>
-        /// работа с консолью чуть удобней
+        /// работа с консолью
         /// </summary>
-        MyConsole myConsole = new MyConsole();
+        ConsoleWrapper MyConsole = new ConsoleWrapper();
+        /// <summary>
+        /// Запись логов
+        /// </summary>
+        LogWriter MyLogWriter;
 
-        public GZipCompress(string sFile, string tFile)
+        public GZipCompress(string set_source_file, string set_target_file)
         {
-            sourceFile = sFile;
-            targetFile = tFile;
+            source_file = set_source_file;
+            target_file = set_target_file;
+
+            MyLogWriter = new LogWriter(Path.ChangeExtension(source_file, "log"));
+
+            source_data = new byte[threads_count][];
+            target_data = new byte[threads_count][];
         }
 
         public void CompressFile()
         {
-            int partSize = 1048576; //1 MB
-            tS = DateTime.Now;
+            time_start = DateTime.Now;
 
-            sourceData = new byte[threadsCount][];
-            gzipData = new byte[threadsCount][];
+            Console.WriteLine($"Cжатие файла: {source_file}\n");
 
+            MyLogWriter.WriteLog($"Cжатие файла: {source_file}");
+
+            using (FileStream source_stream = new FileStream(source_file, FileMode.Open))
+            {
+                //целевой файл
+                using (FileStream target_stream = File.Create(target_file))
+                {
+                    try
+                    {
+                        //Создаем коллекцию потоков равную числу процессоров
+                        threads_collection = new Thread[threads_count];
+
+                        while (source_stream.Position < source_stream.Length)
+                        {
+                            //распределяем данные по потокам и сжимаем их
+                            CompressParts(source_stream);
+                            //объединяем сжатые данные и помещаем их в целевой поток
+                            MergeTargetData(target_stream);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MyConsole.PrintError(ex.Message);
+                        MyLogWriter.WriteLog(ex.Message);
+                    }
+
+                    string message = $"\nСжатие файла завершено\nИсходный размер: {source_stream.Length.ToString()} " +
+                        $"байт \nРазмер файла после сжатия: {target_stream.Length.ToString()} байт.\nПрошло времен: {DateTime.Now - time_start}";
+
+                    MyConsole.PrintText(message, ConsoleColor.Gray);
+                    MyLogWriter.WriteLog(message);
+                }
+            }
+        }
+        /// <summary>
+        /// Распределить исходные данные по потокам и сжать эти данные
+        /// </summary>
+        /// <param name="source_stream"></param>
+        void CompressParts(FileStream source_stream)
+        {
             try
             {
-                Console.WriteLine($"Cжатие файла: {sourceFile}\n");
-
-                using (FileStream sourceStream = new FileStream(sourceFile, FileMode.Open))
+                for (int num = 0; num < threads_count; num++)
                 {
-                    //целевой файл
-                    using (FileStream targetStream = File.Create(targetFile))
+                    if (source_stream.Position < source_stream.Length)
                     {
-                        while (sourceStream.Position < sourceStream.Length)
+                        //определяем размер не обработанных данных, 
+                        //если размер блока сжатия больше, то устанавливаем его в размере остатка
+                        if (part_size > source_stream.Length - source_stream.Position)
                         {
-                            //Создаем коллекцию потоков
-                            ThreadCollection = new Thread[threadsCount];
-                            //распределяем данные по потокам и сжимаем их
-                            CompressParts(partSize, sourceStream);
-                            //объединяем сжатые данные и помещаем их в целевой поток
-                            MergeTargetData(targetStream);
+                            part_size = (int)(source_stream.Length - source_stream.Position);
                         }
 
-                        myConsole.PrintText($"\n\nИсходный размер: {sourceStream.Length.ToString()} " +
-                            $"байт \nРазмер файла после сжатия: {targetStream.Length.ToString()} байт.\nПрошло времен: {DateTime.Now - tS}", ConsoleColor.Gray);
+                        //переопределяем переменную на необходимый размер байт
+                        source_data[num] = new byte[part_size];
+                        // и записываем в нее данные из потока
+                        source_stream.Read(source_data[num], 0, part_size);
+                        //присваиваем потоку метод обработки данных, который выполнит сжатие
+                        threads_collection[num] = new Thread(DataStreamCompression);
+                        //и запускаем его, в метод передаем номер потока
+                        threads_collection[num].Start(num);
                     }
                 }
             }
             catch (Exception ex)
             {
-                myConsole.PrintText(ex.Message, ConsoleColor.Red);
-            }
-        }
-
-        #region Обслуживающие методы
-        /// <summary>
-        /// Распределить исходные данные по потокам и сжать эти данные
-        /// </summary>
-        /// <param name="partSize"></param>
-        /// <param name="sourceStream"></param>
-        void CompressParts(int partSize, FileStream sourceStream)
-        {
-            for (int iPart = 0; iPart < threadsCount; iPart++)
-            {
-                if (sourceStream.Position < sourceStream.Length)
-                {
-                    //определяем размер данных, если размер по умолчанию больше то устанавливаем его в размере остатка
-                    if (partSize > sourceStream.Length - sourceStream.Position)
-                    {
-                        partSize = (int)(sourceStream.Length - sourceStream.Position);
-                    }
-
-                    //переопределяем переменную и записываем из нее данные из потока
-                    sourceData[iPart] = new byte[partSize];
-                    sourceStream.Read(sourceData[iPart], 0, partSize);
-                    //присваиваем потоку метод обработки данных и запускаем его, в метод передаем номер потока 
-                    ThreadCollection[iPart] = new Thread(DataStreamCompression);
-                    ThreadCollection[iPart].Start(iPart);
-                }
+                MyConsole.PrintError(ex.Message);
+                MyLogWriter.WriteLog(ex.Message);
             }
         }
 
@@ -99,39 +126,55 @@ namespace GZipTest
         /// <param name="obj"></param>
         void DataStreamCompression(object obj)
         {
-            int thread = (int)obj;
-            using (MemoryStream ms = new MemoryStream(sourceData[thread].Length))
+            int num = (int)obj;
+            try
             {
-                using (GZipStream zips = new GZipStream(ms, CompressionMode.Compress))
+                using (MemoryStream mem_stream = new MemoryStream(source_data[num].Length))
                 {
-                    zips.Write(sourceData[thread], 0, sourceData[thread].Length);
+                    using (GZipStream zip_stream = new GZipStream(mem_stream, CompressionMode.Compress))
+                    {
+                        zip_stream.Write(source_data[num], 0, source_data[num].Length);
+                    }
+                    target_data[num] = mem_stream.ToArray();
+                    BitConverter.GetBytes(target_data[num].Length).CopyTo(target_data[num], offset);
                 }
-                gzipData[thread] = ms.ToArray();
-                BitConverter.GetBytes(gzipData[thread].Length).CopyTo(gzipData[thread], offsetMark);
             }
-
-            //Выводим номер потока в котором было выполнено сжатие
-            myConsole.PrintProc(thread);
+            catch (Exception ex)
+            {
+                MyConsole.PrintError(ex.Message);
+                MyLogWriter.WriteLog(ex.Message);
+            }
         }
 
         /// <summary>
         /// Объединяем сжатые данные и помещаем их в целевой поток
         /// </summary>
-        /// <param name="targetStream"></param>
-        void MergeTargetData(FileStream targetStream)
+        /// <param name="target_stream"></param>
+        void MergeTargetData(FileStream target_stream)
         {
-            for (int iPart = 0; iPart < threadsCount; iPart++)
+            try
             {
-                //Не все блоки могут быть задействованы когда мы подходим к концу файла или когда файл маленький
-                if (ThreadCollection[iPart] != null)
+                for (int num = 0; num < threads_count; num++)
                 {
-                    //необходимо дождаться завершения потока иначе может быть null
-                    ThreadCollection[iPart].Join();
-                    //записываем данные из блока в целевой поток
-                    targetStream.Write(gzipData[iPart], 0, gzipData[iPart].Length);
+                    //Не все блоки могут быть задействованы когда мы подходим к концу файла или когда файл маленький
+                    if (threads_collection[num] != null)
+                    {
+                        //необходимо дождаться завершения потока
+                        threads_collection[num].Join();
+                        //Выводим номер потока в котором было выполнено сжатие
+                        MyConsole.PrintProc(threads_collection[num].ManagedThreadId);
+                        //записываем данные из блока в целевой поток
+                        target_stream.Write(target_data[num], 0, target_data[num].Length);
+                        //обнуляем использованный поток
+                        threads_collection[num] = null;
+                    }
                 }
             }
+            catch (Exception ex)
+            {
+                MyConsole.PrintError(ex.Message);
+                MyLogWriter.WriteLog(ex.Message);
+            }
         }
-        #endregion
     }
 }

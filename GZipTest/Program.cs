@@ -5,7 +5,15 @@ namespace GZipTest
 {
     class Program
     {
-        static MyConsole MyConsole = new MyConsole();
+        /// <summary>
+        /// Вспомогательный класс работы с консолью
+        /// </summary>
+        static ConsoleWrapper MyConsole = new ConsoleWrapper();
+
+        /// <summary>
+        /// Запись логов
+        /// </summary>
+        static LogWriter MyLogWriter;
 
         //Параметры программы, имена исходного и результирующего файлов должны 
         //задаваться в командной строке следующим образом:
@@ -13,14 +21,14 @@ namespace GZipTest
 
         static void Main(string[] args)
         {
-            //args = new string[3];
-            //args[0] = "decompress";
-            //args[1] = "C:\\Test\\big book.gz";
-            //args[2] = "C:\\Test\\big book.pdf";
+            args = new string[3];
+            args[0] = "decompress";
+            args[1] = "C:\\Test\\big book.gz";
+            args[2] = "C:\\Test\\big book.pdf";
             //args = new string[3];
             //args[0] = "compress";
-            //args[1] = "C:\\Test\\1";
-            //args[2] = "C:\\Test\\1.pdf";
+            //args[1] = "C:\\Test\\big book.pdf";
+            //args[2] = "C:\\Test\\big book.pdf";
 
             if (args.Length == 0)
             {
@@ -29,66 +37,70 @@ namespace GZipTest
                 return;
             }
 
-            string sourceFile;
-            string targetFile;
-            string command;
+            string source_file;
+            string target_file;
+            string app_command;
 
             try
             {
-                command = args[0];
-                sourceFile = args[1];
+                app_command = args[0];
+                source_file = args[1];
+
+                MyLogWriter = new LogWriter(Path.ChangeExtension(source_file, "log"));
 
                 //Первичная проверка данных
-                if (!FirstCheck(sourceFile))
+                if (!FirstCheck(source_file))
                 {
                     Console.ReadKey();
                     return;
                 }
 
-                switch (command.ToLower())
+                switch (app_command.ToLower())
                 {
                     case "compress":
                         //Установим расширение целевого файла как .gz в том случае если этого не сделали
-                        targetFile = args[2].EndsWith(".gz") ? args[2] : args[2] + ".gz";
+                        target_file = args[2].EndsWith(".gz") ? args[2] : args[2] + ".gz";
 
-                        GZipCompress zipCompress = new GZipCompress(sourceFile, targetFile);
+                        GZipCompress zipCompress = new GZipCompress(source_file, target_file);
                         zipCompress.CompressFile();
                         break;
                     case "decompress":
-                        targetFile = args[2];
+                        target_file = args[2];
 
-                        GZipDeComppress zipDeComppress = new GZipDeComppress(sourceFile, targetFile);
-                        zipDeComppress.DeComppressFile();
+                        GZipDeComppress zipDecomppress = new GZipDeComppress(source_file, target_file);
+                        zipDecomppress.DeComppressFile();
                         break;
                     default:
-                        MyConsole.PrintText($"Введены недопустимые параметры! {command}", ConsoleColor.Red);
+                        MyConsole.PrintText($"Введены недопустимые параметры! {app_command}", ConsoleColor.Red);
+                        MyLogWriter.WriteLog($"Введены недопустимые параметры! {app_command}");
                         break;
                 }
             }
             catch (Exception ex)
             {
                 MyConsole.PrintText($"Проверьте правильность введенных данных.\n{ex.Message}", ConsoleColor.Red);
+                MyLogWriter.WriteLog($"Проверьте правильность введенных данных.\n{ex.Message}");
             }
 
             Console.ReadKey();
         }
 
-        static bool FirstCheck(string sourceFile)
+        static bool FirstCheck(string source_file)
         {
-            if (!File.Exists(sourceFile))
+            if (!File.Exists(source_file))
             {
-                MyConsole.PrintText($"Файл с именем \"{sourceFile}\" не найден!", ConsoleColor.Red);
+                MyConsole.PrintText($"Файл с именем \"{source_file}\" не найден!", ConsoleColor.Red);
+                MyLogWriter.WriteLog($"Файл с именем \"{source_file}\" не найден!");
                 return false;
             }
 
-            FileInfo file = new FileInfo(sourceFile);
-            long size = file.Length;
-            if (size == 0)
+            FileInfo file = new FileInfo(source_file);
+            if (file.Length == 0)
             {
-                MyConsole.PrintText($"Файл не содержит данных!", ConsoleColor.Red);
+                MyConsole.PrintText($"Файл {source_file} не содержит данных!", ConsoleColor.Red);
+                MyLogWriter.WriteLog($"Файл {source_file} не содержит данных!");
                 return false;
             }
-
             return true;
         }
     }
